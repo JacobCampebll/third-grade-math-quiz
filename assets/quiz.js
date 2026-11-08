@@ -1,4 +1,5 @@
-import { QUESTIONS } from "./questions.js?v=r2";
+import { QUESTIONS } from "./questions.js?v=r2b";
+import { checkWrittenIdea } from "./written-check.js?v=r2b";
 import {
   ROUND_LABEL,
   answerLabel,
@@ -15,7 +16,7 @@ import {
   saveQuizState,
   scoreState,
   setDraft,
-} from "./grade.js?v=r2";
+} from "./grade.js?v=r2b";
 
 const app = document.querySelector("#app");
 let state = loadQuizState(localStorage, QUESTIONS);
@@ -275,7 +276,7 @@ function renderResults() {
   return el("section", { class: "card", "data-screen": "results", "data-round": "2" }, [
     el("p", { class: "eyebrow" }, `${ROUND_LABEL} finished`),
     el("h1", {}, `${score.correct} of ${score.total}`),
-    el("p", { class: "lede", "data-score": `${score.correct}/${score.total}` }, "Scored answers only. The three sentences are separate and are not scored."),
+    el("p", { class: "lede", "data-score": `${score.correct}/${score.total}` }, "Scored answers, out of 21. Written sentences do not change this number."),
     el("div", { class: "stack" }, [
       el("button", { class: "primary", type: "button", onClick: startPractice }, "Practice these questions"),
       el("button", { class: "secondary", type: "button", onClick: () => { confirmErase = !confirmErase; render(); } }, "Erase saved score and start over"),
@@ -290,13 +291,25 @@ function renderResults() {
     el("h2", {}, missed.length ? "Missed scored questions" : "Every scored answer was correct"),
     list,
     el("h2", {}, "Written responses"),
-    el("p", {}, "Not part of the score. Compare each sentence with the example."),
-    el("ol", { class: "missed", "data-written-review": "true" }, written.map((question) => el("li", { "data-written-id": question.id }, [
-      el("p", { class: "miss-prompt" }, question.prompt),
-      el("p", {}, `Your sentence: ${state.answers[question.id]?.value || ""}`),
-      el("p", { class: "explain" }, `Example: ${question.example}`),
-    ]))),
+    writtenSummary(written),
+    el("p", {}, "The automatic check looks for the math idea in these three sentences only. It does not understand every sentence. If it is not sure, it does not mark the sentence wrong."),
+    el("ol", { class: "missed", "data-written-review": "true" }, written.map((question) => {
+      const sentence = state.answers[question.id]?.value || "";
+      const checked = checkWrittenIdea(question, sentence);
+      return el("li", { "data-written-id": question.id }, [
+        el("p", { class: "miss-prompt" }, question.prompt),
+        el("p", {}, `Your sentence: ${sentence}`),
+        el("p", { class: `check check-${checked.status}`, "data-check-status": checked.status }, checked.note),
+        el("p", { class: "explain" }, `Example: ${question.example}`),
+      ]);
+    })),
   ]);
+}
+
+function writtenSummary(written) {
+  const counts = { match: 0, review: 0, mismatch: 0 };
+  for (const question of written) counts[checkWrittenIdea(question, state.answers[question.id]?.value || "").status] += 1;
+  return el("p", { "data-written-summary": `${counts.match}/${counts.review}/${counts.mismatch}` }, `Automatic check: ${counts.match} matched, ${counts.review} to read, ${counts.mismatch} not matching.`);
 }
 
 function startPractice() {
@@ -317,10 +330,7 @@ function renderPractice() {
     el("p", { class: "prompt" }, question.prompt),
     figureFor(question),
     practiceControls(question, picked, Boolean(feedback)),
-    feedback ? el("div", { class: "explain", "data-practice-result": feedback.written ? "example" : feedback.correct ? "right" : "wrong" }, [
-      el("p", {}, feedback.written ? "Example sentence. This practice try is not scored." : feedback.correct ? "That's right." : `The answer is ${answerLabel(question, question.answer)}.`),
-      el("p", {}, feedback.explanation),
-    ]) : "",
+    feedback ? el("div", { class: "explain", "data-practice-result": feedback.written ? "example" : feedback.correct ? "right" : "wrong" }, practiceFeedback(question, feedback)) : "",
     el("div", { class: "row" }, [
       el("button", { class: "secondary", type: "button", onClick: () => { screen = "results"; render(); } }, "Back to score"),
       feedback
@@ -328,6 +338,21 @@ function renderPractice() {
         : el("button", { class: "primary", type: "button", "data-submit": "true", disabled: canonical(question, picked) ? null : "true", onClick: () => gradePractice(question) }, "Check practice"),
     ]),
   ]);
+}
+
+function practiceFeedback(question, feedback) {
+  if (!feedback.written) {
+    return [
+      el("p", {}, feedback.correct ? "That's right." : `The answer is ${answerLabel(question, question.answer)}.`),
+      el("p", {}, feedback.explanation),
+    ];
+  }
+  const checked = checkWrittenIdea(question, feedback.value);
+  return [
+    el("p", { class: `check check-${checked.status}`, "data-check-status": checked.status }, checked.note),
+    el("p", {}, "Example sentence. Practice does not change the saved sentence."),
+    el("p", {}, feedback.explanation),
+  ];
 }
 
 function practiceControls(question, picked, locked) {

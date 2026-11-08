@@ -1,6 +1,6 @@
 # Math quiz
 
-Round 2 is a new 24-question multiplication quiz for an iPad. Twenty-one answers are graded in the browser. Three questions ask for a sentence and are saved for review, not scored. The first submitted answer is the one that counts. Round 2 is stored separately from the first quiz.
+Round 2 is a new 24-question multiplication quiz for an iPad. Twenty-one answers are graded in the browser. Three questions ask for a sentence. An automatic check looks for the math idea in those sentences and leaves unsure ones for a person to read. That check does not change the score out of 21. The first submitted answer is the one that counts. Round 2 is stored separately from the first quiz.
 
 There is no account, no database, and no score is sent anywhere.
 

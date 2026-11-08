@@ -188,6 +188,11 @@ button:disabled { opacity: 0.45; }
   padding: 12px 14px;
 }
 
+.check { font-weight: 700; margin: 8px 0; }
+.check-match { color: var(--green-dark); }
+.check-mismatch { color: var(--miss); }
+.check-review { color: #7a4b00; }
+
 .hint {
   margin: 8px 0;
   font-weight: 700;
