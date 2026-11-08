@@ -1,22 +1,24 @@
-import { QUESTIONS } from "./questions.js";
+import { QUESTIONS } from "./questions.js?v=r2";
 import {
-  STORAGE_KEY,
+  ROUND_LABEL,
   answerLabel,
   applyDigit,
   backspaceDigit,
   blankState,
+  canonical,
   checkPractice,
   isComplete,
+  loadQuizState,
   missedQuestions,
   nextIndex,
   recordFirstAnswer,
-  sanitize,
+  saveQuizState,
   scoreState,
   setDraft,
-} from "./grade.js";
+} from "./grade.js?v=r2";
 
 const app = document.querySelector("#app");
-let state = loadState();
+let state = loadQuizState(localStorage, QUESTIONS);
 let screen = isComplete(state, QUESTIONS) ? "results" : stateHasProgress(state) ? "question" : "start";
 let index = Math.min(nextIndex(state, QUESTIONS), QUESTIONS.length - 1);
 let practice = null;
@@ -26,16 +28,8 @@ function stateHasProgress(value) {
   return Object.keys(value.answers).length > 0 || Object.keys(value.drafts).length > 0;
 }
 
-function loadState() {
-  try {
-    return sanitize(JSON.parse(localStorage.getItem(STORAGE_KEY) || "null"), QUESTIONS);
-  } catch {
-    return blankState();
-  }
-}
-
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  saveQuizState(localStorage, state);
 }
 
 function el(tag, attrs = {}, children = []) {
@@ -50,6 +44,8 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function render() {
+  document.title = `Math quiz · ${ROUND_LABEL}`;
+  document.body.dataset.round = "2";
   app.replaceChildren();
   const shell = el("main", { class: "shell" });
   if (screen === "start") shell.append(renderStart());
@@ -60,7 +56,8 @@ function render() {
 }
 
 function renderStart() {
-  const answered = scoreState(state, QUESTIONS).answered;
+  const progress = scoreState(state, QUESTIONS);
+  const answered = progress.quizAnswered;
   const finished = isComplete(state, QUESTIONS);
   const actions = [];
   if (answered > 0 && !finished) {
@@ -70,13 +67,13 @@ function renderStart() {
     actions.push(el("button", { class: "primary", type: "button", onClick: () => { screen = "results"; render(); } }, "See the saved score"));
   }
   if (!finished) {
-    actions.push(el("button", { class: answered ? "secondary" : "primary", type: "button", onClick: startFresh }, answered ? "Start a new quiz" : "Start quiz"));
+    actions.push(el("button", { class: answered ? "secondary" : "primary", type: "button", onClick: startFresh }, answered ? "Start Round 2 over" : "Start Round 2"));
   }
-  return el("section", { class: "card", "data-screen": "start" }, [
-    el("p", { class: "eyebrow" }, "Grade 3"),
+  return el("section", { class: "card", "data-screen": "start", "data-round": "2" }, [
+    el("p", { class: "eyebrow" }, ROUND_LABEL),
     el("h1", {}, "Math quiz"),
-    el("p", { class: "lede" }, "24 questions about multiplication. No timer. One question at a time."),
-    el("p", {}, "Your first answer to each question is the one that counts. It is saved on this iPad."),
+    el("p", { class: "lede" }, "24 new questions. 21 are scored, and 3 ask for a sentence. No timer."),
+    el("p", {}, "Your first answer to each question is the one that counts. Round 2 is saved on its own on this iPad."),
     answered && !finished ? el("p", { class: "status", "data-connection": "saved" }, `${answered} of 24 answered`) : "",
     el("div", { class: "stack" }, actions),
   ]);
@@ -84,7 +81,7 @@ function renderStart() {
 
 function startFresh() {
   if (Object.keys(state.answers).length > 0) {
-    const ok = window.confirm("Start a new quiz? This erases the saved score on this iPad.");
+    const ok = window.confirm("Start Round 2 over? This erases the Round 2 score and sentences on this iPad.");
     if (!ok) return;
   }
   state = blankState();
@@ -106,7 +103,7 @@ function renderQuestion() {
   const saved = state.answers[question.id];
   const draft = state.drafts[question.id] || "";
   const selected = saved?.value || draft;
-  return el("section", { class: "card", "data-screen": "question", "data-question-id": question.id }, [
+  return el("section", { class: "card", "data-screen": "question", "data-round": "2", "data-question-id": question.id, "data-kind": question.kind }, [
     header(),
     el("p", { class: "prompt" }, question.prompt),
     figureFor(question),
@@ -116,30 +113,37 @@ function renderQuestion() {
       el("button", { class: "secondary", type: "button", disabled: index === 0 ? "true" : null, onClick: () => { index -= 1; render(); } }, "Back"),
       saved
         ? el("button", { class: "primary", type: "button", onClick: goForward }, index === QUESTIONS.length - 1 ? "See score" : "Next")
-        : el("button", { class: "primary", type: "button", disabled: selected ? null : "true", onClick: () => submitGraded(question, selected) }, "Submit answer"),
+        : el("button", {
+          class: "primary",
+          type: "button",
+          "data-submit": "true",
+          disabled: canonical(question, selected) ? null : "true",
+          onClick: () => submitGraded(question, liveAnswer(question, selected)),
+        }, "Submit answer"),
     ]),
   ]);
 }
 
 function header() {
-  const answered = scoreState(state, QUESTIONS).answered;
+  const progress = scoreState(state, QUESTIONS);
   return el("div", {}, [
     el("div", { class: "top" }, [
-      el("p", { class: "eyebrow" }, "Math quiz"),
+      el("p", { class: "eyebrow" }, ROUND_LABEL),
       el("p", { class: "count" }, `Question ${index + 1} of ${QUESTIONS.length}`),
     ]),
     el("div", {
       class: "track",
       role: "progressbar",
       "aria-valuemin": "0",
-      "aria-valuemax": String(QUESTIONS.length),
-      "aria-valuenow": String(answered),
+      "aria-valuemax": String(progress.quizTotal),
+      "aria-valuenow": String(progress.quizAnswered),
       "aria-label": "Questions answered",
-    }, [el("span", { style: `width:${(answered / QUESTIONS.length) * 100}%` })]),
+    }, [el("span", { style: `width:${(progress.quizAnswered / progress.quizTotal) * 100}%` })]),
   ]);
 }
 
 function answerControls(question, selected, locked) {
+  if (question.kind === "written") return writtenBox(question, selected, locked, false);
   if (question.kind === "numeric") {
     return el("div", {}, [
       el("div", { class: "digits", "aria-live": "polite" }, selected || " "),
@@ -164,6 +168,41 @@ function answerControls(question, selected, locked) {
       },
     }, choice.label);
   }));
+}
+
+function liveAnswer(question, selected) {
+  if (question.kind !== "written") return selected;
+  return document.querySelector("textarea.sentence")?.value ?? selected;
+}
+
+function writtenBox(question, selected, locked, practiceMode) {
+  const box = el("textarea", {
+    class: "sentence",
+    rows: "4",
+    maxlength: "400",
+    "aria-label": "Your sentence",
+    placeholder: "Write one or two sentences.",
+  });
+  box.value = selected || "";
+  if (locked) box.readOnly = true;
+  else {
+    box.addEventListener("input", () => {
+      if (practiceMode) {
+        practice.picked = box.value;
+        const submit = document.querySelector("[data-submit]");
+        if (submit) submit.disabled = canonical(question, box.value) == null;
+        return;
+      }
+      state = setDraft(state, question, box.value);
+      saveState();
+      const submit = document.querySelector("[data-submit]");
+      if (submit) submit.disabled = canonical(question, box.value) == null;
+    });
+  }
+  return el("div", {}, [
+    el("p", { class: "hint" }, locked ? "Saved sentence" : "Write a sentence. It is saved for review and is not scored."),
+    box,
+  ]);
 }
 
 function keypad(selected) {
@@ -231,24 +270,32 @@ function renderResults() {
         el("p", { class: "explain" }, question.explanation),
       ]);
     }))
-    : el("p", {}, "Every answer was correct.");
-  return el("section", { class: "card", "data-screen": "results" }, [
-    el("p", { class: "eyebrow" }, "Finished"),
+    : el("p", {}, "There are no missed scored answers.");
+  const written = QUESTIONS.filter((question) => question.kind === "written");
+  return el("section", { class: "card", "data-screen": "results", "data-round": "2" }, [
+    el("p", { class: "eyebrow" }, `${ROUND_LABEL} finished`),
     el("h1", {}, `${score.correct} of ${score.total}`),
-    el("p", { class: "lede", "data-score": `${score.correct}/${score.total}` }, "This score stays saved on this iPad."),
+    el("p", { class: "lede", "data-score": `${score.correct}/${score.total}` }, "Scored answers only. The three sentences are separate and are not scored."),
     el("div", { class: "stack" }, [
       el("button", { class: "primary", type: "button", onClick: startPractice }, "Practice these questions"),
       el("button", { class: "secondary", type: "button", onClick: () => { confirmErase = !confirmErase; render(); } }, "Erase saved score and start over"),
     ]),
     confirmErase ? el("div", { class: "confirm" }, [
-      el("p", {}, "Erase the saved score on this iPad?"),
+      el("p", {}, "Erase the Round 2 score and sentences on this iPad?"),
       el("div", { class: "row" }, [
         el("button", { class: "secondary", type: "button", onClick: () => { confirmErase = false; render(); } }, "Keep score"),
         el("button", { class: "primary", type: "button", onClick: () => { confirmErase = false; state = blankState(); saveState(); index = 0; screen = "start"; render(); } }, "Erase score"),
       ]),
     ]) : "",
-    el("h2", {}, missed.length ? "Missed questions" : "Nice work"),
+    el("h2", {}, missed.length ? "Missed scored questions" : "Every scored answer was correct"),
     list,
+    el("h2", {}, "Written responses"),
+    el("p", {}, "Not part of the score. Compare each sentence with the example."),
+    el("ol", { class: "missed", "data-written-review": "true" }, written.map((question) => el("li", { "data-written-id": question.id }, [
+      el("p", { class: "miss-prompt" }, question.prompt),
+      el("p", {}, `Your sentence: ${state.answers[question.id]?.value || ""}`),
+      el("p", { class: "explain" }, `Example: ${question.example}`),
+    ]))),
   ]);
 }
 
@@ -264,26 +311,27 @@ function renderPractice() {
   const score = scoreState(state, QUESTIONS);
   const picked = practice.picked;
   const feedback = practice.feedback;
-  return el("section", { class: "card", "data-screen": "practice", "data-question-id": question.id }, [
-    el("p", { class: "status", "data-connection": "saved" }, `Practice only. Quiz score stays ${score.correct} of ${score.total}.`),
+  return el("section", { class: "card", "data-screen": "practice", "data-round": "2", "data-question-id": question.id, "data-kind": question.kind }, [
+    el("p", { class: "status", "data-connection": "saved" }, `Practice only. Scored result stays ${score.correct} of ${score.total}.`),
     el("p", { class: "count" }, `Practice ${practice.index + 1} of ${QUESTIONS.length}`),
     el("p", { class: "prompt" }, question.prompt),
     figureFor(question),
     practiceControls(question, picked, Boolean(feedback)),
-    feedback ? el("div", { class: "explain", "data-practice-result": feedback.correct ? "right" : "wrong" }, [
-      el("p", {}, feedback.correct ? "That's right." : `The answer is ${answerLabel(question, question.answer)}.`),
+    feedback ? el("div", { class: "explain", "data-practice-result": feedback.written ? "example" : feedback.correct ? "right" : "wrong" }, [
+      el("p", {}, feedback.written ? "Example sentence. This practice try is not scored." : feedback.correct ? "That's right." : `The answer is ${answerLabel(question, question.answer)}.`),
       el("p", {}, feedback.explanation),
     ]) : "",
     el("div", { class: "row" }, [
       el("button", { class: "secondary", type: "button", onClick: () => { screen = "results"; render(); } }, "Back to score"),
       feedback
         ? el("button", { class: "primary", type: "button", onClick: nextPractice }, practice.index === QUESTIONS.length - 1 ? "Done" : "Next")
-        : el("button", { class: "primary", type: "button", disabled: picked ? null : "true", onClick: () => gradePractice(question) }, "Check practice"),
+        : el("button", { class: "primary", type: "button", "data-submit": "true", disabled: canonical(question, picked) ? null : "true", onClick: () => gradePractice(question) }, "Check practice"),
     ]),
   ]);
 }
 
 function practiceControls(question, picked, locked) {
+  if (question.kind === "written") return writtenBox(question, picked, locked, true);
   if (question.kind === "numeric") {
     return el("div", {}, [
       el("div", { class: "digits", "aria-live": "polite" }, picked || " "),
@@ -314,7 +362,8 @@ function practiceKeypad() {
 }
 
 function gradePractice(question) {
-  const result = checkPractice(question, practice.picked);
+  const raw = question.kind === "written" ? document.querySelector("textarea.sentence")?.value : practice.picked;
+  const result = checkPractice(question, raw);
   if (!result.ok) return;
   practice.feedback = result;
   render();
@@ -347,36 +396,44 @@ function svgEl(name, attrs = {}) {
 }
 
 function drawFigure(kind) {
-  if (kind === "stickers") return stickers();
-  if (kind === "tiles") return tiles();
-  if (kind === "leaves") return leaves();
-  return cars();
+  if (kind === "stamps") return stamps();
+  if (kind === "tiles5") return tiles5();
+  if (kind === "fish") return fish();
+  return baskets();
 }
 
-function stickers() {
-  const svg = svgEl("svg", { viewBox: "0 0 280 180", role: "img", class: "drawing" });
-  for (let row = 0; row < 2; row += 1) {
-    for (let col = 0; col < 3; col += 1) {
-      const cx = 50 + col * 70;
-      const cy = 48 + row * 70;
-      svg.append(svgEl("circle", { cx, cy, r: 24, fill: "#fff7ea", stroke: "#0f6e56", "stroke-width": 3 }));
-      svg.append(svgEl("circle", { cx, cy, r: 8, fill: "#e07a3d" }));
+function stamps() {
+  const svg = svgEl("svg", { viewBox: "0 0 300 230", role: "img", class: "drawing" });
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 4; col += 1) {
+      svg.append(svgEl("rect", {
+        x: 24 + col * 70,
+        y: 16 + row * 70,
+        width: 52,
+        height: 52,
+        rx: 8,
+        fill: "#fff7ea",
+        stroke: "#0f6e56",
+        "stroke-width": 3,
+      }));
     }
   }
   return svg;
 }
 
-function tiles() {
-  const svg = svgEl("svg", { viewBox: "0 0 300 210", role: "img", class: "drawing" });
-  for (let row = 0; row < 4; row += 1) {
-    for (let col = 0; col < 6; col += 1) {
-      const hidden = col > 0 && col < 5 && row > 0 && row < 3;
-      if (hidden) continue;
+function tiles5() {
+  const svg = svgEl("svg", { viewBox: "0 0 250 250", role: "img", class: "drawing" });
+  const size = 34;
+  const step = 42;
+  const origin = 16;
+  for (let row = 0; row < 5; row += 1) {
+    for (let col = 0; col < 5; col += 1) {
+      if (col > 0 && col < 4 && row > 0 && row < 4) continue;
       svg.append(svgEl("rect", {
-        x: 12 + col * 46,
-        y: 12 + row * 46,
-        width: 38,
-        height: 38,
+        x: origin + col * step,
+        y: origin + row * step,
+        width: size,
+        height: size,
         rx: 6,
         fill: "#fff7ea",
         stroke: "#1e2430",
@@ -384,33 +441,41 @@ function tiles() {
       }));
     }
   }
-  svg.append(svgEl("rect", { x: 52, y: 52, width: 184, height: 92, rx: 12, fill: "#f4e2c4", stroke: "#c4a574", "stroke-width": 2 }));
+  svg.append(svgEl("rect", {
+    x: origin + step - 6,
+    y: origin + step - 6,
+    width: step * 3 + 4,
+    height: step * 3 + 4,
+    rx: 12,
+    fill: "#f4e2c4",
+    stroke: "#c4a574",
+    "stroke-width": 2,
+  }));
   return svg;
 }
 
-function leaves() {
-  const svg = svgEl("svg", { viewBox: "0 0 300 150", role: "img", class: "drawing" });
-  svg.append(svgEl("ellipse", { cx: 70, cy: 80, rx: 28, ry: 16, fill: "#d9ead3", stroke: "#0f6e56", "stroke-width": 3 }));
-  svg.append(svgEl("ellipse", { cx: 200, cy: 78, rx: 70, ry: 36, fill: "#d9ead3", stroke: "#0f6e56", "stroke-width": 3 }));
+function fish() {
+  const svg = svgEl("svg", { viewBox: "0 0 320 150", role: "img", class: "drawing" });
+  svg.append(svgEl("ellipse", { cx: 70, cy: 70, rx: 28, ry: 14, fill: "#d7ebf5", stroke: "#1e2430", "stroke-width": 3 }));
+  svg.append(svgEl("ellipse", { cx: 210, cy: 68, rx: 70, ry: 28, fill: "#d7ebf5", stroke: "#1e2430", "stroke-width": 3 }));
   const small = svgEl("text", { x: 70, y: 130, "text-anchor": "middle", "font-size": 16, fill: "#1e2430" });
-  small.textContent = "5 cm";
-  const large = svgEl("text", { x: 200, y: 130, "text-anchor": "middle", "font-size": 16, fill: "#1e2430" });
-  large.textContent = "3 times as long";
+  small.textContent = "6 cm";
+  const large = svgEl("text", { x: 210, y: 130, "text-anchor": "middle", "font-size": 16, fill: "#1e2430" });
+  large.textContent = "4 times as long";
   svg.append(small, large);
   return svg;
 }
 
-function cars() {
-  const table = el("table", { class: "cars" }, [
-    el("caption", { class: "visually-hidden" }, "Cars and tires"),
-    el("thead", {}, [el("tr", {}, [el("th", {}, "Cars"), el("th", {}, "Tires")])]),
+function baskets() {
+  return el("table", { class: "cars" }, [
+    el("caption", { class: "visually-hidden" }, "Baskets and apples"),
+    el("thead", {}, [el("tr", {}, [el("th", {}, "Baskets"), el("th", {}, "Apples")])]),
     el("tbody", {}, [
-      el("tr", {}, [el("td", {}, "1"), el("td", {}, "4")]),
-      el("tr", {}, [el("td", {}, "2"), el("td", {}, "8")]),
-      el("tr", {}, [el("td", {}, "3"), el("td", {}, "?")]),
+      el("tr", {}, [el("td", {}, "1"), el("td", {}, "8")]),
+      el("tr", {}, [el("td", {}, "2"), el("td", {}, "16")]),
+      el("tr", {}, [el("td", {}, "6"), el("td", {}, "?")]),
     ]),
   ]);
-  return table;
 }
 
 render();

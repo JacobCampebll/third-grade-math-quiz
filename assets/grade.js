@@ -1,4 +1,6 @@
-export const STORAGE_KEY = "g3-math-quiz-v1";
+export const ROUND_LABEL = "Round 2";
+export const STORAGE_KEY = "g3-math-quiz-r2";
+export const PREVIOUS_STORAGE_KEY = "g3-math-quiz-v1";
 
 export function blankState() {
   return { answers: {}, drafts: {} };
@@ -18,7 +20,16 @@ export function canonical(question, raw) {
   if (question.kind === "choice") {
     return question.choices.some((choice) => choice.id === raw) ? raw : null;
   }
+  if (question.kind === "written") return canonicalWritten(raw);
   return null;
+}
+
+export function canonicalWritten(raw) {
+  const text = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (text.length < 12 || text.length > 400) return null;
+  if (!/[A-Za-z]/.test(text)) return null;
+  if (text.split(" ").filter(Boolean).length < 2) return null;
+  return text;
 }
 
 export function applyDigit(current, digit) {
@@ -54,6 +65,7 @@ export function setDraft(state, question, raw) {
   const drafts = { ...state.drafts };
   let text = String(raw ?? "");
   if (question.kind === "numeric") text = text.slice(0, 3);
+  if (question.kind === "written") text = text.slice(0, 400);
   if (!text) delete drafts[question.id];
   else drafts[question.id] = text;
   return { answers: state.answers, drafts };
@@ -75,20 +87,35 @@ export function nextIndex(state, questions) {
   return index === -1 ? questions.length : index;
 }
 
+export function isScored(question) {
+  return question.kind !== "written";
+}
+
 export function scoreState(state, questions) {
+  const scored = questions.filter(isScored);
   let correct = 0;
   let answered = 0;
-  for (const question of questions) {
+  for (const question of scored) {
     const row = state.answers[question.id];
     if (!row) continue;
     answered += 1;
     if (row.value === question.answer) correct += 1;
   }
-  return { correct, answered, total: questions.length };
+  const written = questions.filter((question) => question.kind === "written");
+  return {
+    correct,
+    answered,
+    total: scored.length,
+    writtenAnswered: written.filter((question) => state.answers[question.id]).length,
+    writtenTotal: written.length,
+    quizAnswered: questions.filter((question) => state.answers[question.id]).length,
+    quizTotal: questions.length,
+  };
 }
 
 export function missedQuestions(state, questions) {
   return questions.filter((question) => {
+    if (!isScored(question)) return false;
     const row = state.answers[question.id];
     return row && row.value !== question.answer;
   });
@@ -106,12 +133,27 @@ export function answerLabel(question, value) {
 export function checkPractice(question, raw) {
   const value = canonical(question, raw);
   if (value == null) return { ok: false, reason: "invalid" };
+  if (question.kind === "written") {
+    return { ok: true, value, written: true, explanation: question.example };
+  }
   return {
     ok: true,
     value,
     correct: value === question.answer,
     explanation: question.explanation,
   };
+}
+
+export function loadQuizState(storage, questions, key = STORAGE_KEY) {
+  try {
+    return sanitize(JSON.parse(storage.getItem(key) || "null"), questions);
+  } catch {
+    return blankState();
+  }
+}
+
+export function saveQuizState(storage, state, key = STORAGE_KEY) {
+  storage.setItem(key, JSON.stringify({ answers: state.answers, drafts: state.drafts }));
 }
 
 export function sanitize(raw, questions) {
@@ -124,8 +166,15 @@ export function sanitize(raw, questions) {
       if (value != null) state.answers[question.id] = { value };
     }
     if (!state.answers[question.id] && typeof raw.drafts?.[question.id] === "string") {
-      const draft = question.kind === "numeric" ? raw.drafts[question.id].slice(0, 3) : raw.drafts[question.id];
-      if (draft && (question.kind === "numeric" || canonical(question, draft))) state.drafts[question.id] = draft;
+      const rawDraft = raw.drafts[question.id];
+      if (question.kind === "written") {
+        if (rawDraft.length > 0 && rawDraft.length <= 400) state.drafts[question.id] = rawDraft;
+      } else if (question.kind === "numeric") {
+        const draft = rawDraft.slice(0, 3);
+        if (draft) state.drafts[question.id] = draft;
+      } else if (canonical(question, rawDraft)) {
+        state.drafts[question.id] = rawDraft;
+      }
     }
   }
   return state;
