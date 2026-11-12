@@ -66,6 +66,14 @@ h2 { font-size: 1.4rem; margin: 28px 0 8px; }
   gap: 12px;
   align-items: baseline;
 }
+.text-button {
+  border: 0;
+  background: transparent;
+  color: var(--green-dark);
+  font: inherit;
+  font-weight: 700;
+  min-height: 44px;
+}
 
 .track {
   height: 12px;
@@ -105,6 +113,42 @@ button, .key {
 .secondary { background: transparent; color: var(--green-dark); border: 2px solid var(--green); }
 
 button:disabled { opacity: 0.45; }
+
+.cards { display: grid; gap: 12px; margin-top: 16px; }
+.subject {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  min-height: 84px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 2px solid var(--line);
+  background: white;
+  text-align: left;
+}
+.subject-name { font-size: 1.45rem; font-weight: 700; }
+.subject-note { color: var(--green-dark); font-weight: 700; }
+.sentence-words { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.word {
+  min-height: 52px;
+  padding: 8px 14px;
+  border-radius: 14px;
+  border: 2px solid var(--line);
+  background: white;
+  font: inherit;
+  font-size: 1.15rem;
+}
+.word.selected { border-color: var(--green); background: #e7f5f0; }
+.glue { font-size: 1.15rem; }
+.passage {
+  background: #f7f1e6;
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin: 12px 0;
+}
+.passage summary { font-weight: 700; cursor: pointer; }
 
 .stack, .row { display: grid; gap: 10px; margin-top: 16px; }
 .row { grid-template-columns: 1fr 1.4fr; }

@@ -1,7 +1,10 @@
-import { QUESTIONS } from "./questions.js?v=r2b";
-import { checkWrittenIdea } from "./written-check.js?v=r2b";
+import { QUESTIONS as ROUND2 } from "./questions.js?v=study1";
+import { QUESTIONS as ROUND1 } from "./questions-r1.js?v=study1";
+import { QUESTIONS as ROUND3 } from "./questions-r3.js?v=study1";
+import { PASSAGE, PASSAGE_TITLE, QUESTIONS as READING } from "./reading.js?v=study1";
+import { QUESTIONS as VOCAB } from "./vocabulary.js?v=study1";
+import { checkWrittenIdea } from "./written-check.js?v=study1";
 import {
-  ROUND_LABEL,
   answerLabel,
   applyDigit,
   backspaceDigit,
@@ -16,21 +19,160 @@ import {
   saveQuizState,
   scoreState,
   setDraft,
-} from "./grade.js?v=r2b";
+} from "./grade.js?v=study1";
+
+const SETS = {
+  r1: { id: "r1", subject: "Math", title: "Math quiz", eyebrow: "Round 1", storageKey: "g3-math-quiz-v1", questions: ROUND1, intro: "24 questions about multiplication. No timer. One question at a time.", passage: "" },
+  r2: { id: "r2", subject: "Math", title: "Math quiz", eyebrow: "Round 2", storageKey: "g3-math-quiz-r2", questions: ROUND2, intro: "24 questions. 21 are scored, and 3 ask for a sentence. No timer.", passage: "" },
+  r3: { id: "r3", subject: "Math", title: "Math quiz", eyebrow: "Round 3", storageKey: "g3-math-quiz-r3", questions: ROUND3, intro: "Mixed practice with missing numbers, true or false, and two stories. 20 are scored, and 3 ask for a sentence.", passage: "" },
+  reading: { id: "reading", subject: "Reading", title: "Reading", eyebrow: "Reading", storageKey: "g3-reading-hw9", questions: READING, intro: "Read the passage, then answer. 16 are scored, and 3 ask for a sentence.", passage: PASSAGE, passageTitle: PASSAGE_TITLE },
+  vocab: { id: "vocab", subject: "Vocabulary", title: "Vocabulary", eyebrow: "Vocabulary", storageKey: "g3-vocab-hw9", questions: VOCAB, intro: "Context clues, word parts, and strong words. 16 are scored, and 3 ask for a sentence.", passage: "" },
+};
 
 const app = document.querySelector("#app");
-let state = loadQuizState(localStorage, QUESTIONS);
-let screen = isComplete(state, QUESTIONS) ? "results" : stateHasProgress(state) ? "question" : "start";
-let index = Math.min(nextIndex(state, QUESTIONS), QUESTIONS.length - 1);
+let QUESTIONS = ROUND2;
+let storageKey = SETS.r2.storageKey;
+let roundLabel = SETS.r2.eyebrow;
+let setTitle = SETS.r2.title;
+let setIntro = SETS.r2.intro;
+let passageText = "";
+let passageTitle = "";
+let setId = "";
+let state = blankState();
+let screen = "home";
+let index = 0;
 let practice = null;
 let confirmErase = false;
+
+function renderHome() {
+  return el("section", { class: "card", "data-screen": "home" }, [
+    el("p", { class: "eyebrow" }, "Grade 3"),
+    el("h1", {}, "Study"),
+    el("p", { class: "lede" }, "Pick a subject. Each one saves on its own on this iPad."),
+    el("div", { class: "cards" }, [
+      el("button", { type: "button", class: "subject", "data-subject": "math", onClick: () => { screen = "math"; render(); } }, [
+        el("span", { class: "subject-name" }, "Math"),
+        el("span", { class: "subject-note" }, "Rounds 1, 2, and 3"),
+      ]),
+      el("button", { type: "button", class: "subject", "data-subject": "reading", onClick: () => openSet(SETS.reading) }, [
+        el("span", { class: "subject-name" }, "Reading"),
+        el("span", { class: "subject-note" }, peek(SETS.reading)),
+      ]),
+      el("button", { type: "button", class: "subject", "data-subject": "vocab", onClick: () => openSet(SETS.vocab) }, [
+        el("span", { class: "subject-name" }, "Vocabulary"),
+        el("span", { class: "subject-note" }, peek(SETS.vocab)),
+      ]),
+    ]),
+  ]);
+}
+
+function renderMath() {
+  return el("section", { class: "card", "data-screen": "math" }, [
+    el("p", { class: "eyebrow" }, "Math"),
+    el("h1", {}, "Choose a round"),
+    el("p", {}, "Older rounds stay saved. Starting Round 3 does not erase them."),
+    el("div", { class: "cards" }, [SETS.r1, SETS.r2, SETS.r3].map((set) => el("button", {
+      type: "button",
+      class: "subject",
+      "data-round-id": set.id,
+      onClick: () => openSet(set),
+    }, [
+      el("span", { class: "subject-name" }, set.eyebrow),
+      el("span", { class: "subject-note" }, peek(set)),
+    ]))),
+    el("div", { class: "stack" }, [
+      el("button", { type: "button", class: "secondary", onClick: goHome }, "All subjects"),
+    ]),
+  ]);
+}
+
+function peek(set) {
+  const saved = loadQuizState(localStorage, set.questions, set.storageKey);
+  const score = scoreState(saved, set.questions);
+  if (!score.quizAnswered) return "Not started";
+  if (isComplete(saved, set.questions)) return `Saved · ${score.correct} of ${score.total} scored`;
+  return `${score.quizAnswered} of ${score.quizTotal} answered`;
+}
+
+function passageBox() {
+  if (!passageText) return "";
+  const box = el("details", { class: "passage", open: "true" });
+  box.append(el("summary", {}, passageTitle || "Passage"));
+  box.append(el("p", {}, passageText));
+  return box;
+}
+
+function wordPicker(question, selected, locked, practiceMode) {
+  const chosen = String(selected || "").split("|").filter(Boolean);
+  const line = el("div", { class: "sentence-words", role: "group", "aria-label": "Words" });
+  for (const token of question.tokens) {
+    const bare = token.replace(/[^A-Za-z]/g, "");
+    const tappable = bare && question.picks.some((pick) => pick.toLowerCase() === bare.toLowerCase());
+    if (!tappable) {
+      line.append(el("span", { class: "glue" }, token));
+      continue;
+    }
+    const id = bare.toLowerCase();
+    const on = chosen.includes(id);
+    line.append(el("button", {
+      type: "button",
+      class: `word${on ? " selected" : ""}`,
+      "aria-pressed": on ? "true" : "false",
+      disabled: locked ? "true" : null,
+      onClick: () => {
+        if (locked) return;
+        let next = chosen.filter((item) => item !== id);
+        if (!on) {
+          if (next.length >= 2) next = next.slice(1);
+          next.push(id);
+        }
+        const value = next.join("|");
+        if (practiceMode) practice.picked = value;
+        else {
+          state = setDraft(state, question, value);
+          saveState();
+        }
+        render();
+      },
+    }, bare));
+  }
+  return el("div", {}, [
+    el("p", { class: "hint" }, "Tap two words."),
+    line,
+  ]);
+}
 
 function stateHasProgress(value) {
   return Object.keys(value.answers).length > 0 || Object.keys(value.drafts).length > 0;
 }
 
 function saveState() {
-  saveQuizState(localStorage, state);
+  if (!setId) return;
+  saveQuizState(localStorage, state, storageKey);
+}
+
+function openSet(set) {
+  QUESTIONS = set.questions;
+  storageKey = set.storageKey;
+  roundLabel = set.eyebrow;
+  setTitle = set.title;
+  setIntro = set.intro;
+  passageText = set.passage || "";
+  passageTitle = set.passageTitle || "";
+  setId = set.id;
+  state = loadQuizState(localStorage, QUESTIONS, storageKey);
+  index = Math.min(nextIndex(state, QUESTIONS), Math.max(QUESTIONS.length - 1, 0));
+  screen = isComplete(state, QUESTIONS) ? "results" : stateHasProgress(state) ? "question" : "start";
+  practice = null;
+  confirmErase = false;
+  render();
+}
+
+function goHome() {
+  screen = "home";
+  practice = null;
+  confirmErase = false;
+  render();
 }
 
 function el(tag, attrs = {}, children = []) {
@@ -45,11 +187,13 @@ function el(tag, attrs = {}, children = []) {
 }
 
 function render() {
-  document.title = `Math quiz · ${ROUND_LABEL}`;
-  document.body.dataset.round = "2";
+  document.title = screen === "home" || screen === "math" ? "Grade 3 study" : `${setTitle} · ${roundLabel}`;
+  document.body.dataset.round = setId || "home";
   app.replaceChildren();
   const shell = el("main", { class: "shell" });
-  if (screen === "start") shell.append(renderStart());
+  if (screen === "home") shell.append(renderHome());
+  else if (screen === "math") shell.append(renderMath());
+  else if (screen === "start") shell.append(renderStart());
   else if (screen === "results") shell.append(renderResults());
   else if (screen === "practice") shell.append(renderPractice());
   else shell.append(renderQuestion());
@@ -68,13 +212,14 @@ function renderStart() {
     actions.push(el("button", { class: "primary", type: "button", onClick: () => { screen = "results"; render(); } }, "See the saved score"));
   }
   if (!finished) {
-    actions.push(el("button", { class: answered ? "secondary" : "primary", type: "button", onClick: startFresh }, answered ? "Start Round 2 over" : "Start Round 2"));
+    actions.push(el("button", { class: answered ? "secondary" : "primary", type: "button", onClick: startFresh }, answered ? `Start ${roundLabel} over` : `Start ${roundLabel}`));
   }
-  return el("section", { class: "card", "data-screen": "start", "data-round": "2" }, [
-    el("p", { class: "eyebrow" }, ROUND_LABEL),
-    el("h1", {}, "Math quiz"),
-    el("p", { class: "lede" }, "24 new questions. 21 are scored, and 3 ask for a sentence. No timer."),
-    el("p", {}, "Your first answer to each question is the one that counts. Round 2 is saved on its own on this iPad."),
+  actions.push(el("button", { class: "secondary", type: "button", onClick: goHome }, "All subjects"));
+  return el("section", { class: "card", "data-screen": "start", "data-set": setId }, [
+    el("p", { class: "eyebrow" }, roundLabel),
+    el("h1", {}, setTitle),
+    el("p", { class: "lede" }, setIntro),
+    el("p", {}, "Your first answer to each question is the one that counts. This set is saved on its own on this iPad."),
     answered && !finished ? el("p", { class: "status", "data-connection": "saved" }, `${answered} of 24 answered`) : "",
     el("div", { class: "stack" }, actions),
   ]);
@@ -82,7 +227,7 @@ function renderStart() {
 
 function startFresh() {
   if (Object.keys(state.answers).length > 0) {
-    const ok = window.confirm("Start Round 2 over? This erases the Round 2 score and sentences on this iPad.");
+    const ok = window.confirm(`Start ${roundLabel} over? This erases only this set on this iPad.`);
     if (!ok) return;
   }
   state = blankState();
@@ -104,8 +249,9 @@ function renderQuestion() {
   const saved = state.answers[question.id];
   const draft = state.drafts[question.id] || "";
   const selected = saved?.value || draft;
-  return el("section", { class: "card", "data-screen": "question", "data-round": "2", "data-question-id": question.id, "data-kind": question.kind }, [
+  return el("section", { class: "card", "data-screen": "question", "data-set": setId, "data-question-id": question.id, "data-kind": question.kind }, [
     header(),
+    passageBox(),
     el("p", { class: "prompt" }, question.prompt),
     figureFor(question),
     saved ? el("p", { class: "status", "data-connection": "saved" }, "Saved") : "",
@@ -129,7 +275,8 @@ function header() {
   const progress = scoreState(state, QUESTIONS);
   return el("div", {}, [
     el("div", { class: "top" }, [
-      el("p", { class: "eyebrow" }, ROUND_LABEL),
+      el("p", { class: "eyebrow" }, roundLabel),
+      el("button", { type: "button", class: "text-button", onClick: goHome }, "All subjects"),
       el("p", { class: "count" }, `Question ${index + 1} of ${QUESTIONS.length}`),
     ]),
     el("div", {
@@ -145,6 +292,7 @@ function header() {
 
 function answerControls(question, selected, locked) {
   if (question.kind === "written") return writtenBox(question, selected, locked, false);
+  if (question.kind === "words") return wordPicker(question, selected, locked, false);
   if (question.kind === "numeric") {
     return el("div", {}, [
       el("div", { class: "digits", "aria-live": "polite" }, selected || " "),
@@ -274,15 +422,16 @@ function renderResults() {
     : el("p", {}, "There are no missed scored answers.");
   const written = QUESTIONS.filter((question) => question.kind === "written");
   return el("section", { class: "card", "data-screen": "results", "data-round": "2" }, [
-    el("p", { class: "eyebrow" }, `${ROUND_LABEL} finished`),
+    el("p", { class: "eyebrow" }, `${roundLabel} finished`),
     el("h1", {}, `${score.correct} of ${score.total}`),
-    el("p", { class: "lede", "data-score": `${score.correct}/${score.total}` }, "Scored answers, out of 21. Written sentences do not change this number."),
+    el("p", { class: "lede", "data-score": `${score.correct}/${score.total}` }, score.writtenTotal ? `Scored answers, out of ${score.total}. Written sentences do not change this number.` : `Scored answers, out of ${score.total}.`),
     el("div", { class: "stack" }, [
       el("button", { class: "primary", type: "button", onClick: startPractice }, "Practice these questions"),
       el("button", { class: "secondary", type: "button", onClick: () => { confirmErase = !confirmErase; render(); } }, "Erase saved score and start over"),
+      el("button", { class: "secondary", type: "button", onClick: goHome }, "All subjects"),
     ]),
     confirmErase ? el("div", { class: "confirm" }, [
-      el("p", {}, "Erase the Round 2 score and sentences on this iPad?"),
+      el("p", {}, `Erase the saved ${roundLabel} answers on this iPad?`),
       el("div", { class: "row" }, [
         el("button", { class: "secondary", type: "button", onClick: () => { confirmErase = false; render(); } }, "Keep score"),
         el("button", { class: "primary", type: "button", onClick: () => { confirmErase = false; state = blankState(); saveState(); index = 0; screen = "start"; render(); } }, "Erase score"),
@@ -290,10 +439,10 @@ function renderResults() {
     ]) : "",
     el("h2", {}, missed.length ? "Missed scored questions" : "Every scored answer was correct"),
     list,
-    el("h2", {}, "Written responses"),
-    writtenSummary(written),
-    el("p", {}, "The automatic check looks for the math idea in these three sentences only. It does not understand every sentence. If it is not sure, it does not mark the sentence wrong."),
-    el("ol", { class: "missed", "data-written-review": "true" }, written.map((question) => {
+    written.length ? el("h2", {}, "Written responses") : "",
+    written.length ? writtenSummary(written) : "",
+    written.length ? el("p", {}, "The automatic check looks for a math idea only on the sentences it knows. It does not understand every sentence. If it is not sure, it does not mark the sentence wrong. Other sentences are left for review.") : "",
+    written.length ? el("ol", { class: "missed", "data-written-review": "true" }, written.map((question) => {
       const sentence = state.answers[question.id]?.value || "";
       const checked = checkWrittenIdea(question, sentence);
       return el("li", { "data-written-id": question.id }, [
@@ -302,7 +451,7 @@ function renderResults() {
         el("p", { class: `check check-${checked.status}`, "data-check-status": checked.status }, checked.note),
         el("p", { class: "explain" }, `Example: ${question.example}`),
       ]);
-    })),
+    })) : "",
   ]);
 }
 
@@ -357,6 +506,7 @@ function practiceFeedback(question, feedback) {
 
 function practiceControls(question, picked, locked) {
   if (question.kind === "written") return writtenBox(question, picked, locked, true);
+  if (question.kind === "words") return wordPicker(question, picked, locked, true);
   if (question.kind === "numeric") {
     return el("div", {}, [
       el("div", { class: "digits", "aria-live": "polite" }, picked || " "),

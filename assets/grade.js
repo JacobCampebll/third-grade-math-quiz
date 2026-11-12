@@ -21,7 +21,16 @@ export function canonical(question, raw) {
     return question.choices.some((choice) => choice.id === raw) ? raw : null;
   }
   if (question.kind === "written") return canonicalWritten(raw);
+  if (question.kind === "words") return canonicalWords(raw);
   return null;
+}
+
+export function canonicalWords(raw) {
+  const parts = String(raw ?? "").split("|").map((part) => part.trim().toLowerCase()).filter(Boolean);
+  const unique = [...new Set(parts)];
+  if (unique.length !== 2) return null;
+  unique.sort();
+  return unique.join("|");
 }
 
 export function canonicalWritten(raw) {
@@ -123,6 +132,7 @@ export function missedQuestions(state, questions) {
 
 export function answerLabel(question, value) {
   if (!question || value == null) return "";
+  if (question.kind === "words") return value.split("|").join(" and ");
   if (question.kind === "choice") {
     return question.choices.find((choice) => choice.id === value)?.label ?? value;
   }
@@ -169,6 +179,9 @@ export function sanitize(raw, questions) {
       const rawDraft = raw.drafts[question.id];
       if (question.kind === "written") {
         if (rawDraft.length > 0 && rawDraft.length <= 400) state.drafts[question.id] = rawDraft;
+      } else if (question.kind === "words") {
+        const parts = rawDraft.split("|").filter(Boolean);
+        if (parts.length >= 1 && parts.length <= 2) state.drafts[question.id] = parts.join("|");
       } else if (question.kind === "numeric") {
         const draft = rawDraft.slice(0, 3);
         if (draft) state.drafts[question.id] = draft;
