@@ -1,10 +1,11 @@
-import { QUESTIONS as ROUND2 } from "./questions.js?v=study3";
-import { QUESTIONS as ROUND1 } from "./questions-r1.js?v=study3";
-import { QUESTIONS as ROUND3 } from "./questions-r3.js?v=study3";
-import { PASSAGE, PASSAGE_TITLE, QUESTIONS as READING } from "./reading.js?v=study3";
-import { QUESTIONS as VOCAB } from "./vocabulary.js?v=study3";
-import { checkWrittenIdea } from "./written-check.js?v=study3";
+import { QUESTIONS as ROUND2 } from "./questions.js?v=study4";
+import { QUESTIONS as ROUND1 } from "./questions-r1.js?v=study4";
+import { QUESTIONS as ROUND3 } from "./questions-r3.js?v=study4";
+import { PASSAGE, PASSAGE_TITLE, QUESTIONS as READING } from "./reading.js?v=study4";
+import { QUESTIONS as VOCAB } from "./vocabulary.js?v=study4";
+import { checkWrittenIdea } from "./written-check.js?v=study4";
 import {
+  loadHistory,
   observeSavedSets,
   pinMatches,
   progressReport,
@@ -14,7 +15,7 @@ import {
   snapshotFromState,
   validatePinChange,
   nextPinFailure,
-} from "./parent-progress.js?v=study3";
+} from "./parent-progress.js?v=study4";
 import {
   answerLabel,
   applyDigit,
@@ -30,7 +31,15 @@ import {
   saveQuizState,
   scoreState,
   setDraft,
-} from "./grade.js?v=study3";
+} from "./grade.js?v=study4";
+import {
+  completionDates,
+  describeStreak,
+  loadPracticeDays,
+  localDateString,
+  recordPracticeDay,
+  seedPracticeDays,
+} from "./streak.js?v=study4";
 
 const SETS = {
   r1: { id: "r1", subject: "Math", title: "Math quiz", eyebrow: "Round 1", storageKey: "g3-math-quiz-v1", questions: ROUND1, intro: "24 questions about multiplication. No timer. One question at a time.", passage: "" },
@@ -62,12 +71,58 @@ let pinFails = 0;
 let pinWaitUntil = 0;
 let pinMode = "unlock";
 let pinDraft = { currentOk: false, next: "" };
+let celebration = null;
+let streakSeeded = false;
+
+function ensureStreakSeed() {
+  if (streakSeeded) return;
+  streakSeeded = true;
+  const dates = completionDates(Object.values(SETS), loadHistory(localStorage), (set) => {
+    const saved = loadQuizState(localStorage, set.questions, set.storageKey);
+    return { complete: isComplete(saved, set.questions) };
+  }, (iso) => localDateString(new Date(iso)));
+  seedPracticeDays(localStorage, dates);
+}
+
+function streakInfo() {
+  ensureStreakSeed();
+  return describeStreak(loadPracticeDays(localStorage), localDateString(new Date()));
+}
+
+function streakBadge() {
+  const info = streakInfo();
+  return el("div", { class: "streak-badge", "data-streak": String(info.current), "data-streak-nudge": info.nudge }, [
+    el("p", { class: "streak-flame", "aria-hidden": "true" }, info.current ? "🔥" : "✨"),
+    el("p", { class: "streak-number" }, String(info.current)),
+    el("p", { class: "streak-label" }, "day streak!"),
+    el("p", { class: "streak-best" }, `Best ${info.best}`),
+    info.milestone ? el("p", { class: "streak-nudge" }, `${info.milestone} 🔥`) : "",
+    info.nudge ? el("p", { class: "streak-nudge" }, info.nudge) : "",
+  ]);
+}
+
+function parentStreakLine() {
+  const info = streakInfo();
+  return el("p", { class: "hint", "data-parent-streak": "true" }, `Streak ${info.current} · Best ${info.best}`);
+}
+
+function renderCelebration(info) {
+  const bits = Array.from({ length: 16 }, (_, index) => el("span", { class: "confetti", style: `--i:${index}` }));
+  return el("button", { type: "button", class: "celebrate", "data-celebration": "true", onClick: () => { celebration = null; render(); } }, [
+    el("span", { class: "celebrate-flame", "aria-hidden": "true" }, "🔥"),
+    el("span", { class: "celebrate-number" }, String(info.current)),
+    el("span", { class: "celebrate-label" }, info.milestone ? `${info.milestone} 🔥` : "day streak!"),
+    el("span", { class: "celebrate-hint" }, "Tap to keep going"),
+    ...bits,
+  ]);
+}
 
 function renderHome() {
   return el("section", { class: "card", "data-screen": "home" }, [
     el("p", { class: "eyebrow" }, "Grade 3"),
     el("h1", {}, "Study"),
     el("p", { class: "lede" }, "Pick a subject. Each one saves on its own on this iPad."),
+    streakBadge(),
     el("div", { class: "cards" }, [
       el("button", { type: "button", class: "subject", "data-subject": "math", onClick: () => { screen = "math"; render(); } }, [
         el("span", { class: "subject-name" }, "Math"),
@@ -321,6 +376,7 @@ function renderParent() {
     el("p", { class: "eyebrow" }, "Parents"),
     el("h1", {}, "Progress"),
     el("p", {}, "Read only. Scores cannot be changed here."),
+    parentStreakLine(),
     report.weeks.length ? trendChart(report) : el("p", {}, "No saved scores yet."),
     el("div", { class: "table-wrap" }, [progressTable(report.rows)]),
     el("div", { class: "stack" }, [
@@ -418,6 +474,7 @@ function render() {
   else if (screen === "results") shell.append(renderResults());
   else if (screen === "practice") shell.append(renderPractice());
   else shell.append(renderQuestion());
+  if (celebration && screen === "results") shell.append(renderCelebration(celebration));
   app.append(shell);
   app.append(lockButton());
 }
@@ -602,11 +659,17 @@ function typeDigit(key) {
 }
 
 function submitGraded(question, raw) {
+  const wasComplete = isComplete(state, QUESTIONS);
   const result = recordFirstAnswer(state, question, raw);
   if (!result.ok) return;
   state = result.state;
   saveState();
-  if (!result.duplicate && isComplete(state, QUESTIONS)) {
+  if (!result.duplicate && !wasComplete && isComplete(state, QUESTIONS)) {
+    const update = recordPracticeDay(loadPracticeDays(localStorage), localDateString(new Date()));
+    if (update.added) {
+      seedPracticeDays(localStorage, update.days);
+      celebration = update;
+    }
     screen = "results";
     render();
     return;

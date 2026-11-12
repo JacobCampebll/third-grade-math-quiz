@@ -229,9 +229,9 @@ test("site files stay static and label round 2", () => {
   const quiz = readFileSync(new URL("../assets/quiz.js", import.meta.url), "utf8");
   const grade = readFileSync(new URL("../assets/grade.js", import.meta.url), "utf8");
   assert.match(html, /Grade 3 study/);
-  assert.match(html, /href="assets\/styles\.css\?v=study3"/);
-  assert.match(html, /src="assets\/quiz\.js\?v=study3"/);
-  assert.match(quiz, /questions\.js\?v=study3/);
+  assert.match(html, /href="assets\/styles\.css\?v=study4"/);
+  assert.match(html, /src="assets\/quiz\.js\?v=study4"/);
+  assert.match(quiz, /questions\.js\?v=study4/);
   assert.match(quiz, /g3-math-quiz-v1/);
   assert.match(quiz, /g3-math-quiz-r3/);
   assert.match(quiz, /Automatic check/);
