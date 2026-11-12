@@ -38,6 +38,32 @@ const round3 = {
   r3q20: String(24 / 8),
 };
 
+test("a previously saved round 2 payload still loads", () => {
+  const payload = JSON.stringify({
+    answers: {
+      q1: { value: "q1-multiply" },
+      q2: { value: "36" },
+      q10: { value: "No, 6 times 8 is 48 because both factors doubled so the product is 4 times as big." },
+    },
+    drafts: { q3: "5" },
+  });
+  const storage = {
+    data: { "g3-math-quiz-r2": payload },
+    getItem(key) { return this.data[key] ?? null; },
+    setItem() { throw new Error("loading a saved quiz must not write"); },
+  };
+  const state = loadQuizState(storage, ROUND2, "g3-math-quiz-r2");
+  assert.equal(state.answers.q1.value, "q1-multiply");
+  assert.equal(state.answers.q2.value, "36");
+  assert.equal(state.answers.q10.value.includes("6 times 8 is 48"), true);
+  assert.equal(state.drafts.q3, "5");
+  assert.deepEqual(
+    { correct: scoreState(state, ROUND2).correct, total: scoreState(state, ROUND2).total },
+    { correct: 2, total: 21 },
+  );
+  assert.equal(storage.getItem("g3-math-quiz-r2"), payload);
+});
+
 test("math round 3 answers and keeps old rounds separate", () => {
   assert.equal(7 + 8, 9 + 6);
   assert.notEqual(12 - 4, 13 - 6);
