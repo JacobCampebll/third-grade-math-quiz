@@ -1,9 +1,20 @@
-import { QUESTIONS as ROUND2 } from "./questions.js?v=study1";
-import { QUESTIONS as ROUND1 } from "./questions-r1.js?v=study1";
-import { QUESTIONS as ROUND3 } from "./questions-r3.js?v=study1";
-import { PASSAGE, PASSAGE_TITLE, QUESTIONS as READING } from "./reading.js?v=study1";
-import { QUESTIONS as VOCAB } from "./vocabulary.js?v=study1";
-import { checkWrittenIdea } from "./written-check.js?v=study1";
+import { QUESTIONS as ROUND2 } from "./questions.js?v=study3";
+import { QUESTIONS as ROUND1 } from "./questions-r1.js?v=study3";
+import { QUESTIONS as ROUND3 } from "./questions-r3.js?v=study3";
+import { PASSAGE, PASSAGE_TITLE, QUESTIONS as READING } from "./reading.js?v=study3";
+import { QUESTIONS as VOCAB } from "./vocabulary.js?v=study3";
+import { checkWrittenIdea } from "./written-check.js?v=study3";
+import {
+  observeSavedSets,
+  pinMatches,
+  progressReport,
+  rememberSnapshot,
+  reportToCsv,
+  savePinHash,
+  snapshotFromState,
+  validatePinChange,
+  nextPinFailure,
+} from "./parent-progress.js?v=study3";
 import {
   answerLabel,
   applyDigit,
@@ -19,7 +30,7 @@ import {
   saveQuizState,
   scoreState,
   setDraft,
-} from "./grade.js?v=study1";
+} from "./grade.js?v=study3";
 
 const SETS = {
   r1: { id: "r1", subject: "Math", title: "Math quiz", eyebrow: "Round 1", storageKey: "g3-math-quiz-v1", questions: ROUND1, intro: "24 questions about multiplication. No timer. One question at a time.", passage: "" },
@@ -43,6 +54,14 @@ let screen = "home";
 let index = 0;
 let practice = null;
 let confirmErase = false;
+let returnScreen = "home";
+let parentUnlocked = false;
+let pinBuffer = "";
+let pinMessage = "";
+let pinFails = 0;
+let pinWaitUntil = 0;
+let pinMode = "unlock";
+let pinDraft = { currentOk: false, next: "" };
 
 function renderHome() {
   return el("section", { class: "card", "data-screen": "home" }, [
@@ -149,6 +168,8 @@ function stateHasProgress(value) {
 function saveState() {
   if (!setId) return;
   saveQuizState(localStorage, state, storageKey);
+  const set = SETS[setId];
+  if (set) rememberSnapshot(localStorage, snapshotFromState(set, state, new Date().toISOString()));
 }
 
 function openSet(set) {
@@ -172,7 +193,205 @@ function goHome() {
   screen = "home";
   practice = null;
   confirmErase = false;
+  parentUnlocked = false;
   render();
+}
+
+function lockButton() {
+  return el("button", {
+    type: "button",
+    class: "parent-lock",
+    "aria-label": "Parent view",
+    "data-parent-lock": "true",
+    onClick: onLock,
+  }, "🔒");
+}
+
+function onLock() {
+  pinBuffer = "";
+  pinMessage = "";
+  pinMode = "unlock";
+  parentUnlocked = false;
+  if (screen === "pin" || screen === "parent") {
+    screen = returnScreen || "home";
+    render();
+    return;
+  }
+  returnScreen = screen;
+  screen = "pin";
+  render();
+}
+
+function renderPin() {
+  const waiting = Date.now() < pinWaitUntil;
+  const titles = {
+    unlock: "Parent PIN",
+    current: "Current PIN",
+    next: "New PIN",
+    confirm: "New PIN again",
+  };
+  return el("section", { class: "card", "data-screen": "pin" }, [
+    el("p", { class: "eyebrow" }, "Parents"),
+    el("h1", {}, titles[pinMode] || "Parent PIN"),
+    el("p", { class: "digits", "aria-live": "polite" }, pinBuffer.replace(/./g, "•") || " "),
+    pinMessage ? el("p", { class: "hint", "data-pin-message": "true" }, pinMessage) : "",
+    el("div", { class: "keypad" }, ["1", "2", "3", "4", "5", "6", "7", "8", "9", "spacer", "0", "delete"].map((key) => {
+      if (key === "spacer") return el("span", { "aria-hidden": "true" });
+      if (key === "delete") {
+        return el("button", { type: "button", class: "key ghost", disabled: waiting ? "true" : null, onClick: () => { pinBuffer = pinBuffer.slice(0, -1); render(); } }, "Delete");
+      }
+      return el("button", {
+        type: "button",
+        class: "key",
+        disabled: waiting ? "true" : null,
+        onClick: () => { if (!waiting && pinBuffer.length < 8) { pinBuffer += key; render(); } },
+      }, key);
+    })),
+    el("div", { class: "stack" }, [
+      el("button", { type: "button", class: "primary", "data-pin-submit": "true", disabled: waiting || pinBuffer.length < 4 ? "true" : null, onClick: submitPin }, waiting ? "Please wait" : "Continue"),
+      el("button", { type: "button", class: "secondary", onClick: onLock }, "Close"),
+    ]),
+  ]);
+}
+
+async function submitPin() {
+  if (Date.now() < pinWaitUntil) return;
+  if (pinMode === "unlock" || pinMode === "current") {
+    const ok = await pinMatches(pinBuffer, localStorage);
+    if (!ok) {
+      const next = nextPinFailure(pinFails, Date.now());
+      pinFails = next.fails;
+      pinWaitUntil = next.waitUntil;
+      pinBuffer = "";
+      pinMessage = pinWaitUntil ? "Too many tries. Wait 15 seconds." : "That PIN is not right.";
+      render();
+      if (pinWaitUntil) setTimeout(() => { if (Date.now() >= pinWaitUntil) { pinMessage = ""; render(); } }, pinWaitUntil - Date.now() + 30);
+      return;
+    }
+    pinFails = 0;
+    if (pinMode === "current") {
+      pinDraft.currentOk = true;
+      pinMode = "next";
+      pinBuffer = "";
+      pinMessage = "";
+      render();
+      return;
+    }
+    parentUnlocked = true;
+    screen = "parent";
+    pinBuffer = "";
+    pinMessage = "";
+    observeSavedSets(localStorage, Object.values(SETS), new Date().toISOString());
+    render();
+    return;
+  }
+  if (pinMode === "next") {
+    pinDraft.next = pinBuffer;
+    pinMode = "confirm";
+    pinBuffer = "";
+    pinMessage = "";
+    render();
+    return;
+  }
+  const result = validatePinChange({ currentOk: pinDraft.currentOk, next: pinDraft.next, confirm: pinBuffer });
+  if (!result.ok) {
+    pinMessage = result.reason === "mismatch" ? "Those new PINs do not match." : "Use 4 to 8 digits.";
+    pinMode = "next";
+    pinBuffer = "";
+    render();
+    return;
+  }
+  await savePinHash(pinDraft.next, localStorage);
+  pinDraft = { currentOk: false, next: "" };
+  pinMode = "unlock";
+  pinBuffer = "";
+  pinMessage = "PIN saved.";
+  parentUnlocked = true;
+  screen = "parent";
+  render();
+}
+
+function renderParent() {
+  if (!parentUnlocked) {
+    screen = "pin";
+    return renderPin();
+  }
+  const report = progressReport(observeSavedSets(localStorage, Object.values(SETS), new Date().toISOString()));
+  return el("section", { class: "card", "data-screen": "parent" }, [
+    el("p", { class: "eyebrow" }, "Parents"),
+    el("h1", {}, "Progress"),
+    el("p", {}, "Read only. Scores cannot be changed here."),
+    report.weeks.length ? trendChart(report) : el("p", {}, "No saved scores yet."),
+    el("div", { class: "table-wrap" }, [progressTable(report.rows)]),
+    el("div", { class: "stack" }, [
+      el("button", { type: "button", class: "secondary", onClick: () => downloadCsv(report.rows) }, "Export CSV"),
+      el("button", { type: "button", class: "secondary", "data-change-pin": "true", onClick: () => { pinMode = "current"; pinBuffer = ""; pinMessage = ""; screen = "pin"; render(); } }, "Change PIN"),
+      el("button", { type: "button", class: "primary", onClick: onLock }, "Close"),
+    ]),
+  ]);
+}
+
+function trendChart(report) {
+  const colors = { Math: "#1c8f72", Reading: "#3c7fd6", Vocabulary: "#e08a22" };
+  const subjects = ["Math", "Reading", "Vocabulary"];
+  const width = 640;
+  const height = 230;
+  const pad = 28;
+  const group = (width - pad * 2) / Math.max(report.weeks.length, 1);
+  const bar = Math.min(26, Math.max(10, (group - 16) / 3));
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("class", "trend");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("data-trend", "true");
+  svg.setAttribute("aria-label", "Percent correct by week");
+  report.weeks.forEach((week, weekIndex) => {
+    subjects.forEach((subject, subjectIndex) => {
+      const point = report.series[subject][weekIndex];
+      if (!point || point.percent == null) return;
+      const barHeight = Math.max(4, (point.percent / 100) * (height - 58));
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", String(pad + weekIndex * group + subjectIndex * (bar + 4)));
+      rect.setAttribute("y", String(height - 32 - barHeight));
+      rect.setAttribute("width", String(bar));
+      rect.setAttribute("height", String(barHeight));
+      rect.setAttribute("rx", "6");
+      rect.setAttribute("fill", colors[subject]);
+      svg.append(rect);
+    });
+    const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    label.setAttribute("x", String(pad + weekIndex * group));
+    label.setAttribute("y", String(height - 10));
+    label.setAttribute("fill", "#243044");
+    label.setAttribute("font-size", "14");
+    label.textContent = week.slice(5);
+    svg.append(label);
+  });
+  return el("div", {}, [
+    svg,
+    el("p", { class: "hint" }, "Green is Math, blue is Reading, orange is Vocabulary. Bar height is percent correct."),
+  ]);
+}
+
+function progressTable(rows) {
+  const table = el("table", { class: "cars progress-table" }, [
+    el("thead", {}, [el("tr", {}, ["Week", "Date", "Subject", "Set", "Auto score", "Written to review"].map((label) => el("th", {}, label)))]),
+    el("tbody", {}, rows.map((row) => el("tr", {}, [
+      el("td", {}, row.week),
+      el("td", {}, row.at.slice(0, 10)),
+      el("td", {}, row.subject),
+      el("td", {}, row.label),
+      el("td", {}, `${row.correct} of ${row.total}`),
+      el("td", {}, String(row.writtenAwaiting)),
+    ]))),
+  ]);
+  return table;
+}
+
+function downloadCsv(rows) {
+  const blob = new Blob([reportToCsv(rows)], { type: "text/csv" });
+  const link = el("a", { href: URL.createObjectURL(blob), download: "study-progress.csv" });
+  link.click();
 }
 
 function el(tag, attrs = {}, children = []) {
@@ -193,11 +412,14 @@ function render() {
   const shell = el("main", { class: "shell" });
   if (screen === "home") shell.append(renderHome());
   else if (screen === "math") shell.append(renderMath());
+  else if (screen === "pin") shell.append(renderPin());
+  else if (screen === "parent") shell.append(renderParent());
   else if (screen === "start") shell.append(renderStart());
   else if (screen === "results") shell.append(renderResults());
   else if (screen === "practice") shell.append(renderPractice());
   else shell.append(renderQuestion());
   app.append(shell);
+  app.append(lockButton());
 }
 
 function renderStart() {
